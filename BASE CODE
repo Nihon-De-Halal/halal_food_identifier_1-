@@ -1,0 +1,774 @@
+!pip install opencv-python matplotlib pytesseract fuzzywuzzy easyocr pyheif rapidfuzz fuzz tesseract
+import pandas as pd
+# Existing terms
+japanese_terms = [
+    "豚", "豚肉", "ポーク", "豚脂", "豚エキス", "ポークエキス",
+    "鶏", "鶏肉", "鶏エキス", "チキンエキス", "鶏ガラ",
+    "牛", "牛肉", "牛エキス", "ビーフエキス", "肉",
+    "ベーコン", "ハム", "ラード", "ゼラチン", "酒",
+    "料理酒", "みりん", "リカー", "アルコール", "ワイン",
+    "ビール", "酒精", "洋酒", "リキュール","酒精","洋酒","	リキュール","フコル","蒸し鶏","鶏肉","ぶた","原材料名","グリセリン"
+]
+
+
+new_terms = [
+    "乳化剤", "ショートニング", "マーガリン", "醤油", "味噌",
+    "醸造酢", "酢", "チーズ", "発酵調味料", "アミノ酸", "生クリーム", "ブイヨン","発色剤","レシチン","着色料",'香料','乳化剤',"ベニバナ黄色素"]
+
+# Expanded list with OCR errors
+expanded_list = []
+for n in range(1, 101):
+    correct_entry = f"アノコール分{n}%"
+    expanded_list.append(correct_entry)
+    expanded_list.extend([
+        f"アノコロール分{n}%",  # Katakana error
+        f"アノカール分{n}%",    # Katakana error
+        f"アノコール分{n}o",    # % misread as 'o'
+        f"アノコール分{n}0",    # % misread as '0'
+        f"アノコール分{n}°",    # % misread as '°'
+        f"アノコール分{n}",     # Missing %
+        f"アノコ—ル分{n}%",    # Dash misinterpretation
+        f"アノコエル分{n}%",    # "ー" misread as "エ"
+        f"フコル分{n}%"
+    ])
+    if n < 100:
+        expanded_list.extend([
+            f"アノコール分{str(n).replace('1', '7')}%",  # 1 misread as 7
+            f"アノコール分{str(n).replace('3', '8')}%",  # 3 misread as 8
+            f"アノコール分{str(n)}0%",                 # Extra 0 added
+            f"アノコール分{str(n)}o%",                 # Added 'o'
+        ])
+buta=["貴", "富", "脳","ぴた", "ふた", "びた", "プタ", "ベタ", "ビタ", "⊂", "豚肉"]
+buta2 = ["貴肉", "富肉", "脳肉", "豚育", "豚自", "ぴた肉", "ふた肉", "びた肉", "プタ肉", "ベタ肉", "ビタ肉", "⊂肉", "貴富","にく","ぶた",]
+pork = ["ポーク", "ホーク", "ポツク", "ポク", "ポカク", "ポチク", "ポークス", "プーク", "ポークン", "ポツクン","鶏工ニス"]
+buta3 = ["貴脂", "富脂", "脳脂", "豚自", "豚志", "豚市", "ぴた脂", "ふた脂", "びた脂", "プタ脂", "ベタ脂", "ビタ脂", "⊂脂", "豚肉"]
+buta4 = ["貴エキス", "富エキス", "脳エキス", "豚エキ", "豚エクス", "ぴたエキス", "ふたエキス", "びたエキス", "プタエキス", "ベタエキス", "ビタエキス", "⊂エキス", "豚肉エキス","豚丁 トス"]
+pork2 = ["ホークエキス", "ポツクエキス", "ポクエキス", "ポカクエキス", "ポチクエキス", "ポークスエキス", "プークエキス", "ポークエキ", "ポークンエキス","ポ三ク"]
+tori = ["とり","貴", "富", "脳", "鶏肉", "鳥", "ぴた", "ふた", "びた", "プタ", "ベタ", "ビタ", "⊂", "鶏卵"]
+tori2 = ["貴肉", "富肉", "脳肉", "鶏育", "鶏自", "ぴた肉", "ふた肉", "びた肉", "プタ肉", "ベタ肉", "ビタ肉", "⊂肉", "鳥肉"]
+tori3 = ["貴エキス", "富エキス", "脳エキス", "鶏エキ", "鶏エクス", "ぴたエキス", "ふたエキス", "びたエキス", "プタエキス", "ベタエキス", "ビタエキス", "⊂エキス", "鶏肉エキス"]
+chicken1 = ["チキンエキ", "チケンエキス", "チキンエクス", "チキンエキシ", "シキンエキス", "チキンエキッス", "チキンエキセ", "チキネキス", "チキンエイキス","‥チン"]
+tori4 = ["貴ガラ", "富ガラ", "脳ガラ", "鶏ガ", "鳥ガラ", "ぴたガラ", "ふたガラ", "びたガラ", "プタガラ", "ベタガラ", "ビタガラ", "⊂ガラ"]
+ushi1 = ["午", "生", "牡", "仇", "牛", "五", "仞", "兮", "⊂", "干",";_"]
+ushi2 = ["午肉", "生肉", "牡肉", "仇肉", "牛育", "牛自", "牛市", "兮肉", "⊂肉", "干肉"]
+ushi3 = ["午エキス", "生エキス", "牡エキス", "仇エキス", "牛エキ", "牛エクス", "兮エキス", "⊂エキス", "干エキス", "牛エイキス","生クリーム"]
+beef1 = ["ピーフエキス", "ビフエキス", "ビーフエクス", "ビーエキス", "ビーフエキ", "ピーフエクス", "⊂エキス", "バーフエキス","ビータェキス"]
+niku1 = ["育", "自", "市", "仂", "刃", "⊂", "肉自", "肉育", "市育", "仂市"]
+bacon1 = ["ペーコン", "ベコン", "ベーコソ", "ヘーコン", "⊂コン", "ベーコム", "ベーコンズ", "ベーコフ", "ベーコリ"]
+ham1 = ["ハソ", "ハミ", "ハメ", "八ム", "⊂ム", "ハモ", "ハス", "ハール", "ハンム"]
+lard1 = ["ラード", "フラード", "バード", "ラド", "⊂ード", "ラート", "ラーズ", "ラーウド", "ランド"]
+gelatin1 = ["ゼロチン", "セラチン", "ゼラテイン", "ゼチラ", "⊂チン", "ゼラタン", "セロチン", "ゼラクチン","ゼチン"]
+sake1 = ["酉", "酒精", "洋酒", "リカー", "⊂酒", "洒", "酒静", "酒生", "酒洲", "酒間","理酒","常"]
+ryourishu1 = ["料酒", "猟酒", "涼酒", "料理洲", "⊂酒", "料洲", "猟洲", "猟酒", "料寿",]
+mirin1 = ["みちん", "みれん", "みらん", "みいるん", "⊂りん", "みりんず", "みリん", "みりソ"]
+liquor1 = ["リカ", "リクー", "リカス", "リカール", "⊂カー", "リキュ", "リケア", "リカーエル"]
+alcohol1 = ["アルコフル", "アルカール", "アルコオル", "アルコレ", "⊂コール", "アルコン", "アルクール", "アリコール"]
+wine1 = ["ワイム", "ワィン", "ワン", "ワインズ", "⊂イン", "ワインス", "ワインル", "ワイノ"]
+beer1 = ["ビイル", "ベール", "ビーア", "ビアー", "⊂ール", "ビアン", "ビーウル", "ビレール","ヨール"]
+shusei1 = ["酒精", "酉精", "朱精", "酒青", "⊂精", "酒清", "酒静", "酒情"]
+youshu1 = ["羊酒", "洋洲", "洋州", "用酒", "⊂酒", "洋酒生", "洋酒清", "洋酒静","; 精"]
+liqueur1 = ["リキユール", "リキーエル", "リケル", "リキュア", "⊂キュール", "リクール", "リキュールス", "リケール"]
+fukoru1 = ["フコロ", "フコール", "フコラ", "フクロ", "⊂コル", "フクル", "フコーリ", "フコウル","フニル"]
+nyukazai1 = ["乳化済", "乳力剤", "乳下剤", "丑化剤", "冊化剤", "乳加剤", "入化剤", "⊂化剤", "乳効果剤", "乳火剤", "乳化才"]
+shortening1 = ["ショートンニング", "ショートニンク", "ショートニン", "ショートリニング", "ショーニング", "ショトニング", "ショート二ング", "シヨートニング", "⊂ョートニング","シヨート"]
+margarine1 = ["マーガリーン", "マーガレン", "マーガリソ", "マーガレーン", "マーカーリン", "マーガリ", "マルガリン", "⊂ーガリン"]
+shoyu1 = ["醤由", "醤祐", "醤友", "酉油", "醤ゆ", "醤油う", "醤郵", "⊂油", "翔油","馨油"]
+miso1 = ["味祖", "味疎", "美祖", "見疎", "未曽", "味そ", "みそ", "⊂そ", "未祖"]
+jozosu1 = ["醸造酢", "醸造砂", "醸送酢", "醸州酢", "酉造酢", "醸蔵酢", "醸造す", "⊂酢", "醸造州","藤造酢","発酔調味"]
+su1 = ["砂", "酉", "巣", "酢う", "す", "⊂", "鋤", "鋭"]
+cheese1 = ["チース", "チィーズ", "チーズン", "チィス", "チズ", "チィズ", "チイス", "⊂ーズ", "チーズス","チーズ風味ソース"]
+hakkouchoumiryouri1 = ["発行調味料", "発酵調味了", "発光調味料", "発孝調味料", "髪酵調味料", "発酵調味料ん", "⊂酵調味料"]
+aminosan1 = ["アミノサン", "アミノさん", "アミノさ", "アミロ酸", "アミノ酸ス", "アミソ酸", "⊂ノ酸", "アメノ酸"]
+namakuriimu1 = ["生クリム", "生クリソ", "生栗ーム", "生くリーム", "生グリーム", "生クリーマ", "⊂クリーム"]
+bouillon1 = ["ブイヨンヌ", "ブィヨン", "ブヨン", "ブイソン", "ブルヨン", "ブイヨーン", "ブイュン", "⊂イヨン","ブイヨ","アミノケ"]
+misidentified_words_eng = [
+    "T", "I", "⊂", "E", "L",  # Buta1 variations
+    "TINE", "BUNK", "BINK", "IINK",  # Buta_niku1 variations
+    "POKE", "POCK", "PARK", "POLR",  # Pork1 variations
+    "BTSH", "BUSH", "BIHT",  # Buta_shi1 variations
+    "BUTTIS", "BTXIS", "EXISS",  # Buta_ekisu1 variations
+    "PORKES", "PRK EXE", "PQRKS",  # Pork_ekisu1 variations
+    "TRI", "TRY", "TI", "TOY",  # Tori1 variations
+    "TINK", "TINE", "TINUC",  # Tori_niku1 variations
+    "TRKEX", "TEXEX", "TOYEX",  # Tori_ekisu1 variations
+    "CHKINS", "CHECKER", "CHIKNSS",  # Chicken_ekisu1 variations
+    "TRYG", "TOYG", "TRIGAR",  # Tori_gara1 variations
+    "T", "H", "I", "L", "⊂",  # Ushi1 variations
+    "IINK", "USHIN", "WINE",  # Ushi_niku1 variations
+    "UKEIS", "UKTXS", "USHISS",  # Ushi_ekisu1 variations
+    "BEEF", "BEES", "BEETS",  # Beef_ekisu1 variations
+    "INK", "NIC", "NICK",  # Niku1 variations
+    "BEAN", "BENE", "BANE",  # Bacon1 variations
+    "HAM", "HIM", "HU",  # Ham1 variations
+    "LAHD", "LAND", "LAD",  # Lard1 variations
+    "GEITN", "GLTN", "GETIN",  # Gelatin1 variations
+    "SAK", "SEK", "SALE",  # Sake1 variations
+    "RYOUSH", "ROWRSU", "ROSHU",  # Ryourishu1 variations
+    "MIRNI", "MIRIN", "MINR",  # Mirin1 variations
+    "LICK", "RIQU", "LIQU",  # Liquor1 variations
+    "AKOLL", "ALLCL", "LKCOL",  # Alcohol1 variations
+    "WIN", "WINE", "WEEN",  # Wine1 variations
+    "BEER", "BEAR", "BERL",  # Beer1 variations
+    "SUES", "SUSH", "SHUE",  # Shusei1 variations
+    "YOSU", "YOUH", "YOUX",  # Youshu1 variations
+    "LIQU", "LIGR", "LIQQR",  # Liqueur1 variations
+    "FOK", "FOQL", "FOR"  # Fukoru1 variations
+]
+
+# Combine all terms
+all_terms = (
+    japanese_terms
+    + new_terms
+    + expanded_list
+    + buta
+    + buta2
+    + pork
+    + buta3
+    + buta4
+    + pork2
+    + tori
+    + tori2
+    + tori3
+    + chicken1
+    + tori4
+    + ushi1
+    + ushi2
+    + ushi3
+    + beef1
+    + niku1
+    + bacon1
+    + ham1
+    + lard1
+    + gelatin1
+    + sake1
+    + ryourishu1
+    + mirin1
+    + liquor1
+    + alcohol1
+    + wine1
+    + beer1
+    + shusei1
+    + youshu1
+    + liqueur1
+    + fukoru1
+    + nyukazai1
+    + shortening1
+    + margarine1
+    + shoyu1
+    + miso1
+    + jozosu1
+    + su1
+    + cheese1
+    + hakkouchoumiryouri1
+    + aminosan1
+    + namakuriimu1
+    + bouillon1
+    + misidentified_words_eng
+
+)
+labels = (
+    ["No"] * len(japanese_terms)
+    + ["Yes"] * len(new_terms)
+    + ["ALC"] * len(expanded_list)
+    + ["Buta"] * len(buta)
+    + ["Buta2"] * len(buta2)
+    + ["Pork"] * len(pork)
+    + ["Buta3"] * len(buta3)
+    + ["Buta4"] * len(buta4)
+    + ["Pork2"] * len(pork2)
+    + ["Tori"] * len(tori)
+    + ["Tori2"] * len(tori2)
+    + ["Tori3"] * len(tori3)
+    + ["Chicken1"] * len(chicken1)
+    + ["Tori4"] * len(tori4)
+    + ["Uchi"] * len(ushi1)
+    + ["Uchi2"] * len(ushi2)
+    + ["Uchi3"] * len(ushi3)
+    + ["Beef1"] * len(beef1)
+    + ["Niku"] * len(niku1)
+    + ["Bacon1"] * len(bacon1)
+    + ["Ham1"] * len(ham1)
+    + ["Lard1"] * len(lard1)
+    + ["Gelatin1"] * len(gelatin1)
+    + ["Sake1"] * len(sake1)
+    + ["Ryourishu1"] * len(ryourishu1)
+    + ["Mirin1"] * len(mirin1)
+    + ["Liquor1"] * len(liquor1)
+    + ["Alcohol1"] * len(alcohol1)
+    + ["Wine1"] * len(wine1)
+    + ["Beer1"] * len(beer1)
+    + ["Shusei1"] * len(shusei1)
+    + ["Youshu1"] * len(youshu1)
+    + ["Liqueur1"] * len(liqueur1)
+    + ["Fukoru1"] * len(fukoru1)
+    + ["Nyukazai1"] * len(nyukazai1)
+    + ["Shortening1"] * len(shortening1)
+    + ["Margarine1"] * len(margarine1)
+    + ["Shoyu1"] * len(shoyu1)
+    + ["Miso1"] * len(miso1)
+    + ["Jozosu1"] * len(jozosu1)
+    + ["Su1"] * len(su1)
+    + ["Cheese1"] * len(cheese1)
+    + ["Hakkouchoumiryouri1"] * len(hakkouchoumiryouri1)
+    + ["Aminosan1"] * len(aminosan1)
+    + ["Namakuriimu1"] * len(namakuriimu1)
+    + ["Bouillon1"] * len(bouillon1)
+    + ["Misidentified_words_eng"] * len(misidentified_words_eng)
+
+
+)
+
+# Create the DataFrame
+df = pd.DataFrame({
+    "Japanese Terms": all_terms,
+    "Label": labels
+})
+
+# Display the DataFrame
+df
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+from PIL import Image
+import pyheif
+from fuzzywuzzy import fuzz
+import pandas as pd
+from concurrent.futures import ThreadPoolExecutor
+from easyocr import Reader
+import re
+import math
+
+# Initialize EasyOCR reader at the global scope
+reader = Reader(["en", "ja"], gpu=False)
+
+
+def convert_heic_to_jpg(heic_path, output_path):
+    """Converts a HEIC image to JPG format."""
+    heif_file = pyheif.read(heic_path)
+    img = Image.frombytes(
+        heif_file.mode,
+        heif_file.size,
+        heif_file.data,
+        "raw",
+        heif_file.mode,
+        heif_file.stride
+    )
+    img = img.convert("RGB")
+    img.save(output_path, "JPEG")
+    print(f"HEIC image converted and saved as: {output_path}")
+    return output_path
+
+def convert_to_jpg(image_path, output_path):
+    """Detects image format and converts it to JPG."""
+    try:
+        img = cv2.imread(image_path)
+        if img is None:
+            raise ValueError("Invalid image format or file not found.")
+        print(f"Image successfully loaded. Checking format...")
+        image_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        Image.fromarray(image_rgb).save(output_path, "JPEG")
+        print(f"Image saved as JPG: {output_path}")
+        return output_path
+    except Exception as e:
+        if image_path.lower().endswith(".heic") or image_path.lower().endswith(".heif"):
+            print("Detected HEIC/HEIF format. Converting...")
+            return convert_heic_to_jpg(image_path, output_path)
+        else:
+            print(f"Error processing {image_path}: {e}")
+            return None
+
+def analyze_image_quality(image):
+    """Analyze image quality metrics."""
+    results = {}
+
+    # Convert to grayscale
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # Check for sharpness
+    laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+    results['sharpness'] = laplacian_var
+
+    # Check for noise
+    _, std_dev = cv2.meanStdDev(gray)
+    results['noise_level'] = std_dev[0][0]
+
+    # Check brightness and contrast
+    brightness = np.mean(gray)
+    contrast = gray.std()
+    results['brightness'] = brightness
+    results['contrast'] = contrast
+
+    return results
+
+def enhance_image(image, analysis):
+    """Enhance image based on quality analysis."""
+    enhanced_image = image.copy()
+
+    # Sharpen if blurry
+    if analysis['sharpness'] < 100:
+        kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
+        enhanced_image = cv2.filter2D(enhanced_image, -1, kernel)
+        print("Applied sharpening.")
+
+    # Denoise if noisy
+    if analysis['noise_level'] > 20:
+        enhanced_image = cv2.fastNlMeansDenoisingColored(enhanced_image, None, 10, 10, 7, 21)
+        print("Applied denoising.")
+
+    # Adjust brightness and contrast if needed
+    if analysis['brightness'] < 50 or analysis['contrast'] < 30:
+        alpha = 1.5  # Contrast control
+        beta = 50    # Brightness control
+        enhanced_image = cv2.convertScaleAbs(enhanced_image, alpha=alpha, beta=beta)
+        print("Adjusted brightness and contrast.")
+
+    return enhanced_image
+
+def detect_text_orientation(image):
+    """
+    Detect text orientation using multiple methods.
+
+    Args:
+        image (numpy.ndarray): Input image
+
+    Returns:
+        dict: Detected orientation information
+    """
+    # Convert to grayscale
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # Apply adaptive thresholding
+    thresh = cv2.adaptiveThreshold(
+        gray, 255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV, 11, 2
+    )
+
+    # Find contours
+    contours, _ = cv2.findContours(
+        thresh,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    # Filter out small contours
+    text_contours = [
+        cnt for cnt in contours
+        if cv2.contourArea(cnt) > 50  # Minimum contour area
+        and cv2.contourArea(cnt) < 0.3 * (image.shape[0] * image.shape[1])  # Maximum contour area
+    ]
+
+    # If no significant contours, return default
+    if not text_contours:
+        return {
+            'orientation': 'unknown',
+            'angle': 0,
+            'confidence': 0
+        }
+
+    # Compute orientations using multiple methods
+    orientations = []
+
+    # Method 1: Minimum Area Rectangle
+    for cnt in text_contours:
+        rect = cv2.minAreaRect(cnt)
+        angle = rect[2]
+
+        # Normalize angle
+        if angle < -45:
+            angle = 90 + angle
+        elif angle > 45:
+            angle = angle - 90
+
+        orientations.append(angle)
+
+    # Method 2: Principal Component Analysis (PCA)
+    def compute_pca_angle(cnt):
+        points = cnt.reshape(-1, 2)
+        mean, eigenvectors = cv2.PCACompute(points.astype(np.float32), mean=None)
+        angle_rad = np.arctan2(eigenvectors[0][1], eigenvectors[0][0])
+        return np.degrees(angle_rad)
+
+    pca_angles = [compute_pca_angle(cnt) for cnt in text_contours]
+
+    # Combine methods
+    all_angles = orientations + pca_angles
+
+    # Compute median and confidence
+    median_angle = np.median(all_angles)
+    angle_variance = np.var(all_angles)
+
+    # Confidence calculation
+    confidence = 1 - min(angle_variance / 100, 1)
+
+    # Determine orientation
+    if abs(median_angle) < 1:
+        orientation = 'horizontal'
+    elif abs(abs(median_angle) - 90) < 1:
+        orientation = 'vertical'
+    else:
+        orientation = 'skewed'
+
+    return {
+        'orientation': orientation,
+        'angle': median_angle,
+        'confidence': confidence
+    }
+
+def deskew_image(image, force_deskew=False):
+    """
+    Correct skew in an image with advanced orientation detection.
+
+    Args:
+        image (numpy.ndarray): Input image
+        force_deskew (bool): Force deskew even if text appears horizontal
+
+    Returns:
+        tuple: (deskewed_image, rotation_angle)
+    """
+    # Detect text orientation
+    orientation_info = detect_text_orientation(image)
+    angle = orientation_info['angle']
+
+    # Print debug information
+    print(f"Detected Orientation: {orientation_info['orientation']}")
+    print(f"Detected Angle: {angle:.2f} degrees")
+    print(f"Confidence: {orientation_info['confidence']:.2f}")
+
+    # Conditions for skew correction
+    should_deskew = (
+        force_deskew or
+        abs(angle) > 0.5 or  # Slight skew detected
+        orientation_info['orientation'] != 'horizontal'
+    )
+
+    # If no significant skew and not forced, return original image
+    if not should_deskew:
+        print("No significant skew detected. Returning original image.")
+        return image, 0
+
+    # Prepare rotation
+    (h, w) = image.shape[:2]
+    center = (w // 2, h // 2)
+
+    # Create rotation matrix
+    M = cv2.getRotationMatrix2D(center, angle, 1.0)
+
+    # Compute new image dimensions to prevent cropping
+    cos = np.abs(np.cos(np.radians(angle)))
+    sin = np.abs(np.sin(np.radians(angle)))
+    new_w = int((h * sin) + (w * cos))
+    new_h = int((h * cos) + (w * sin))
+
+    # Adjust the rotation matrix
+    M[0, 2] += (new_w / 2) - center[0]
+    M[1, 2] += (new_h / 2) - center[1]
+
+    # Perform the rotation
+    rotated_image = cv2.warpAffine(
+        image,
+        M,
+        (new_w, new_h),
+        flags=cv2.INTER_CUBIC,
+        borderMode=cv2.BORDER_REPLICATE
+    )
+
+    return rotated_image, angle
+def get_document_background_color(image_path, visualize=False):
+    """
+    Enhanced background color detection with improved handling of white backgrounds.
+    Returns RGB values and hex code of the detected background color.
+    """
+    try:
+        # Read the image
+        image = cv2.imread(image_path)
+        if image is None:
+            raise ValueError(f"Unable to read image from {image_path}")
+
+        # Convert to RGB for visualization
+        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+        # Convert to grayscale
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+        # Calculate histogram
+        hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
+
+        # Find the peak in the upper range (likely background for white/light backgrounds)
+        peak_idx = np.argmax(hist[200:]) + 200
+
+        # If we have a strong peak in the upper range, it's likely a white/light background
+        if hist[peak_idx] > np.mean(hist) * 2:  # Peak is significantly higher than average
+            # Sample pixels around the peak value
+            mask = (gray >= peak_idx - 5) & (gray <= peak_idx + 5)
+            background_pixels = image_rgb[mask]
+        else:
+            # Fallback to adaptive thresholding method
+            thresh = cv2.adaptiveThreshold(
+                gray, 255,
+                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY_INV, 21, 2
+            )
+
+            # Find contours
+            contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+            if contours:
+                largest_contour = max(contours, key=cv2.contourArea)
+                mask = np.zeros_like(gray)
+                cv2.drawContours(mask, [largest_contour], 0, 255, -1)
+                background_pixels = image_rgb[mask == 0]
+            else:
+                background_pixels = image_rgb.reshape(-1, 3)
+
+        if len(background_pixels) > 0:
+            # Use the median of background pixels as the background color
+            background_color = tuple(map(int, np.median(background_pixels, axis=0)))
+            hex_color = '#{:02x}{:02x}{:02x}'.format(*background_color)
+
+            # Additional check for near-white colors
+            is_white = all(x > 240 for x in background_color)
+            if is_white:
+                background_color = (255, 255, 255)
+                hex_color = '#ffffff'
+
+            print(f"Background Detection Method: {'White background' if is_white else 'Extracted from document'}")
+            print(f"Background RGB: {background_color}")
+            print(f"Background Hex: {hex_color}")
+            print(f"Background Pixels Analyzed: {len(background_pixels)}")
+
+            return {
+                'rgb': background_color,
+                'hex': hex_color,
+                'method': 'white_background' if is_white else 'document_background'
+            }
+
+        return None
+
+    except Exception as e:
+        print(f"Error processing image: {e}")
+        return None
+
+def is_white_or_grey_background(rgb_color, threshold=30):
+    r, g, b = rgb_color
+
+    # Check if colors are close to each other (indicating grey)
+    color_diff = max(rgb_color) - min(rgb_color)
+
+    # Check if colors are high (close to white)
+    is_bright = r > 200 and g > 200 and b > 200
+
+    # Check if colors are relatively uniform (grey-like)
+    is_uniform = color_diff <= threshold
+
+    return is_bright or is_uniform
+
+def preprocess_image(image, background_color=None):
+    if isinstance(image, tuple):
+        # Unpack the rotated image and angle
+        rotated_image, angle = image
+        print(f"Preprocessing rotated image (Rotation Angle: {angle:.2f} degrees)")
+    else:
+        rotated_image = image
+
+    # Ensure the input is a NumPy array
+    if not isinstance(rotated_image, np.ndarray):
+        try:
+            rotated_image = np.array(rotated_image)
+        except Exception as e:
+            raise ValueError(f"Unable to convert image to NumPy array: {e}")
+
+    # Convert to grayscale
+    if len(rotated_image.shape) == 2:  # Already grayscale
+        gray = rotated_image
+    else:
+        gray = cv2.cvtColor(rotated_image, cv2.COLOR_BGR2GRAY)
+
+    # Increase contrast adaptively
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    contrast_enhanced = clahe.apply(gray)
+
+    # Use the detected background color to determine the thresholding method
+    try:
+        if background_color is not None:
+            brightness = sum(background_color) / 3  # Approximate luminance
+            if brightness > 200:  # Likely a light background
+                print("Detected a white/grey background.")
+                inverted = cv2.bitwise_not(contrast_enhanced)
+                _, binarized = cv2.threshold(inverted, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            else:
+                print("Detected a dark/colored background.")
+                _, binarized = cv2.threshold(contrast_enhanced, 100, 255, cv2.THRESH_BINARY)
+        else:
+            # Fallback if background color is not provided
+            print("Warning: No background color provided. Defaulting to Otsu's thresholding.")
+            _, binarized = cv2.threshold(contrast_enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    except Exception as e:
+        print(f"Error determining thresholding method: {e}")
+        # Fallback thresholding
+        _, binarized = cv2.threshold(contrast_enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    # Denoise the image
+    try:
+        denoised = cv2.fastNlMeansDenoising(binarized, None, 10, 7, 21)
+    except Exception as e:
+        print(f"Denoising failed, using original binarized image: {e}")
+        denoised = binarized
+
+    # Resize the image for better OCR
+    scale_factor = 5.0
+    try:
+        resized = cv2.resize(denoised, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_CUBIC)
+    except Exception as e:
+        print(f"Resizing failed, using original denoised image: {e}")
+        resized = denoised
+
+    return resized
+
+
+def fuzzy_match(term, df):
+    """Perform fuzzy string matching between the term and the ingredient dataset."""
+    match = max(df["Japanese Terms"], key=lambda x: fuzz.ratio(term, x))
+    match_score = fuzz.ratio(term, match)
+    return match, match_score
+
+def analyze_image(image_path, df):
+    """Analyze the image for halal/haram items with enhanced image processing."""
+    # Convert image to JPG if needed
+    converted_path = "/tmp/converted_image.jpg"
+    jpg_path = convert_to_jpg(image_path, converted_path)
+
+    if not jpg_path:
+        print("Error: Image conversion failed")
+        return
+
+    # Detect background color using the converted JPG path
+    background_info = get_document_background_color(jpg_path, visualize=False)
+    if background_info:
+        print(f"Detected background color: RGB{background_info['rgb']}, {background_info['hex']}")
+
+    # Read the converted image
+    original_image = cv2.imread(jpg_path)
+    if original_image is None:
+        print("Error: Could not load the converted image.")
+        return
+
+    # Rest of the processing remains the same
+    quality_analysis = analyze_image_quality(original_image)
+    print("\nImage Quality Analysis:")
+    print(f"- Sharpness: {quality_analysis['sharpness']:.2f}")
+    print(f"- Noise Level: {quality_analysis['noise_level']:.2f}")
+    print(f"- Brightness: {quality_analysis['brightness']:.2f}")
+    print(f"- Contrast: {quality_analysis['contrast']:.2f}\n")
+
+    # Enhance the image based on quality analysis
+    enhanced_image = enhance_image(original_image, quality_analysis)
+
+    # Deskew the enhanced image
+    deskewed_image, angle = deskew_image(enhanced_image)
+    print(f"Deskew Results:")
+    print(f"- Rotation angle: {angle:.2f} degrees\n")
+
+    # Preprocess based on background color
+    preprocessed_image = preprocess_image(
+        deskewed_image,
+        background_color=background_info['rgb'] if background_info else None
+    )
+
+    # Extract text from different image stages
+    extraction_methods = {
+        "Enhanced": enhanced_image,
+        "Deskewed": deskewed_image,
+        "Preprocessed": preprocessed_image
+    }
+
+    texts = {}
+    print("Extracting text using different processing methods...")
+    for method_name, image_variant in extraction_methods.items():
+        results = reader.readtext(image_variant, detail=0)
+        texts[method_name] = "\n".join(results)
+        print(f"- {method_name} method extracted {len(results)} text segments")
+
+    # Select the best version based on text length
+    best_version = max(texts, key=lambda k: len(texts[k]))
+    print(f"\nUsing {best_version} version for analysis as it produced the most text.\n")
+    analyzed_text = texts[best_version]
+
+    # Output the analyzed text
+    print(f"Extracted text from {best_version} version:\n{analyzed_text}")
+    # Analyze the extracted text
+    contains_grey = False
+    contains_haram = False
+    print("\n--- Starting Ingredient Matching ---\n")
+    with ThreadPoolExecutor() as executor:
+        future_to_term = {executor.submit(fuzzy_match, term, df): term for term in analyzed_text.split()}
+        for future in future_to_term:
+            term = future_to_term[future]
+            try:
+                if term in df["Japanese Terms"].values:
+                    label = df.loc[df["Japanese Terms"] == term, "Label"].values[0]
+                    if label == "No":
+                        print(f"{term}: It is haram")
+                        print("Warning: It is haram")
+                        contains_haram = True  # Mark that a haram item is found
+                    elif label == "Yes":
+                        print(f"{term}: Grey item. Please verify.")
+                        contains_grey = True
+                    continue  # Skip fuzzy matching for exact matches
+
+                # Use fuzzy matching to find the closest match
+                match, match_score = future.result()
+                print(f"Testing term: {term}")
+                print(f"Closest match in dataset: {match} (Score: {match_score})")
+                if match_score > 55:
+                    label = df.loc[df["Japanese Terms"] == match, "Label"].values[0]
+                    print(f"Label identified: {label}")
+                    if label == "ALC":
+                        print(f"{match}: It may contain alcohol. Please verify or double-check with the authorities.")
+                        contains_grey = True
+                    elif label in ["Buta", "Buta2", "Pork", "Buta3", "Buta4", "Pork2"]:
+                        print(f"{match}: It contains pork. Warning: It is haram.")
+                        contains_haram = True
+                    elif label in ["Tori", "Tori2", "Tori3", "Chicken1", "Tori4"]:
+                        print(f"{match}: It contains chicken. Please verify.")
+                        contains_grey = True
+                    elif label in ["Uchi", "Uchi2", "Uchi3", "Beef1", "Niku"]:
+                        print(f"{match}: It contains beef. Please verify.")
+                        contains_grey = True
+                    elif label in ["Bacon1", "Ham1", "Lard1", "Gelatin1"]:
+                        print(f"{match}: It contains pork fat or other non-halal ingredients. Warning: It is haram.")
+                        contains_haram = True
+                    elif label in ["Sake1", "Ryourishu1", "Mirin1", "Liquor1", "Alcohol1", "Wine1", "Beer1", "Shusei1", "Youshu1", "Liqueur1"]:
+                        print(f"{match}: It contains alcohol-related ingredients. Warning: It is haram.")
+                        contains_haram = True
+                    elif label in ["Shortening1", "Margarine1"]:
+                        print(f"{match}: It contains shortening or margarine. Please verify.")
+                        contains_grey = True
+                    elif label in ["Shoyu1", "Miso1", "Jozosu1", "Su1"]:
+                        print(f"{match}: It contains fermented seasonings. Please verify.")
+                        contains_grey = True
+                    elif label in ["Cheese1", "Hakkouchoumiryouri1", "Aminosan1", "Namakuriimu1", "Bouillon1"]:
+                        print(f"{match}: It contains processed ingredients. Please verify.")
+                        contains_grey = True
+                    elif label in ["Misidentified_words_eng"]:
+                        print(f"{match}: It contains haram. Please verify.")
+                        contains_grey = True
+
+                    else:
+                        print(f"{match}: It seems halal examining the image you uploaded.")
+            except Exception as e:
+                print(f"Error matching term {term}: {e}")
+
+    if contains_haram:
+        print("\nResult: Warning!! It contains haram items. Please avoid these items.")
+    elif contains_grey:
+        print("\nResult: Warning!! It contains grey items. Please check further with the store or the authorities.")
+    else:
+        print("\nResult: It seems halal examining the image you uploaded.")
+
+
+# Example usage with image path
+image_path = '/content/IMG_7050 2.HEIC'  # Replace with your actual image path
+# Assume 'df' is the dataset with Japanese Terms and Labels (provided separately)
+analyze_image(image_path, df)
